@@ -70,7 +70,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ai_request = "Analyse my play in the following poker hand\n\n"
         human_readable = ai_request + human_readable
         # Send the result
-        await update.message.reply_text(f"```\n{human_readable}\n```", parse_mode='Markdown')
+        await update.message.reply_text(human_readable)
     
     except Exception as e:
         print(f"ERROR: Failed to process URL {url}: {e}", file=sys.stderr)
