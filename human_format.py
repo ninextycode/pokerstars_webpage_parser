@@ -287,7 +287,7 @@ class ToHumanFormat:
                 
                 if 'hand' in seat_result:
                     hand = self._format_hand(seat_result['hand'])
-                    final_hand = seat_result.get('final_hand', [''])[0]
+                    final_hand = seat_result.get('final_hand', ['muck'])[0]
                     lines.append(f"{position}: {hand} ({final_hand})")
                 
                 if 'collected' in seat_result:
