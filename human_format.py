@@ -9,6 +9,11 @@ class ToHumanFormat:
         self.seats = self.attrs['seats']
         self.hero_seat = self._get_hero_seat()
         self.position_map = self._create_position_map()
+    
+    def to_bb_string(self, value):
+        """Convert a chip/cash value to BB and format as string"""
+        bb_value = value / self.bb
+        return f"{bb_value:.2f}".rstrip('0').rstrip('.') + " bb"
         
     def _get_hero_seat(self):
         """Find the hero's seat number"""
@@ -19,54 +24,29 @@ class ToHumanFormat:
     
     def _create_position_map(self):
         """Map seat numbers to positions (SB, BB, UTG, MP, CO, BTN)"""
-        position_map = {}
+        seats_for_num_players = {
+            2: ["BB", "BTN/SB"],
+            3: ["SB", "BB", "BTN"],
+            4: ["SB", "BB", "UTG", "BTN"],
+            5: ["SB", "BB", "UTG", "CO", "BTN"],
+            6: ["SB", "BB", "UTG", "MP", "CO", "BTN"]
+        }
         num_players = len(self.players)
+        
+        seats_from_btn = seats_for_num_players[num_players]
+
+        position_map = {}
         
         # Find positions relative to button
         for player in self.players:
             seat = player['seat']
-            
-            if seat == self.button:
-                position_map[seat] = 'BTN'
-            elif num_players == 2:
-                # Heads up: button is SB
-                if seat == self.button:
-                    position_map[seat] = 'BTN/SB'
-                else:
-                    position_map[seat] = 'BB'
-            else:
-                # Calculate position relative to button
-                seats_after_button = (seat - self.button) % (num_players + 1)
-                if seats_after_button == 0:
-                    seats_after_button = num_players
-                    
-                if seats_after_button == 1:
-                    position_map[seat] = 'SB'
-                elif seats_after_button == 2:
-                    position_map[seat] = 'BB'
-                elif num_players == 3:
-                    position_map[seat] = 'BTN'
-                elif num_players == 4:
-                    position_map[seat] = 'CO'
-                elif num_players == 5:
-                    position_map[seat] = 'CO' if seats_after_button == num_players else 'UTG'
-                elif num_players == 6:
-                    if seats_after_button == 3:
-                        position_map[seat] = 'UTG'
-                    elif seats_after_button == 4:
-                        position_map[seat] = 'MP'
-                    elif seats_after_button == 5:
-                        position_map[seat] = 'CO'
-                else:  # 7+ players
-                    if seats_after_button == 3:
-                        position_map[seat] = 'UTG'
-                    elif seats_after_button < num_players - 1:
-                        position_map[seat] = 'MP'
-                    elif seats_after_button == num_players - 1:
-                        position_map[seat] = 'CO'
-        
+            position_after_btn = (seat - self.button - 1) % (num_players)
+            position_map[seat] = seats_from_btn[position_after_btn]
+            if seat == self.hero_seat:
+                position_map[seat] += "(me)"
         return position_map
     
+
     def _format_card(self, card):
         """Format a single card"""
         if card['rank'] == 'x':
@@ -91,6 +71,11 @@ class ToHumanFormat:
             if action['action'] in ['post', 'call', 'raise', 'bet']:
                 if isinstance(action['value'], (int, float)):
                     pot += action['value']
+                elif action['value'] == "SB":
+                    pot += self.sb
+                elif action['value'] == "BB":
+                    pot += self.bb
+
             elif action['action'] == 'return_uncalled':
                 pot -= action['value']
         return pot
@@ -113,11 +98,24 @@ class ToHumanFormat:
         
         return investment
     
+    def _has_player_folded(self, seat, streets_to_include):
+        """Check if a player has folded in the streets completed so far"""
+        streets = self.attrs.get('streets', {})
+        
+        for street_name in streets_to_include:
+            if street_name in streets:
+                actions = streets[street_name].get('actions', [])
+                for action in actions:
+                    if action['seat'] == seat and action['action'] == 'fold':
+                        return True
+        return False
+    
     def _format_stacks_for_street(self, streets_completed):
         """Format stack information for a street"""
         lines = []
         lines.append("Stacks:")
         
+        n_can_bet = 0
         for player in sorted(self.players, key=lambda p: p['seat']):
             seat = player['seat']
             position = self.position_map.get(seat, f"Seat{seat}")
@@ -129,10 +127,13 @@ class ToHumanFormat:
             hero_marker = " (Hero)" if player.get('hero', False) else ""
             
             # Only show stack if player hasn't folded and has chips remaining
-            if remaining_bb >= 0:
+            if remaining_bb > 0 and not self._has_player_folded(seat, streets_completed):
                 lines.append(f"  {position}: {remaining_bb:.1f}bb{hero_marker}")
-        
-        return lines
+                n_can_bet += 1
+        if n_can_bet < 2:
+            return []
+        else:
+            return lines
     
     def _format_action(self, action, street='preflop'):
         """Format a single action"""
@@ -144,27 +145,23 @@ class ToHumanFormat:
             return None
         
         # Mark if it's hero
-        prefix = f"{position}(me)" if seat == self.hero_seat else position
+        prefix = position
         
         if action_type == 'fold':
             return f"{prefix} fold"
         elif action_type == 'check':
             return f"{prefix} check"
         elif action_type == 'call':
-            value_bb = action['value'] / self.bb
             all_in = " allin" if action.get('all_in', False) else ""
-            return f"{prefix}{all_in} call {value_bb:.1f}bb"
+            return f"{prefix}{all_in} call {self.to_bb_string(action['value'])}"
         elif action_type == 'bet':
-            value_bb = action['value'] / self.bb
             all_in = " allin" if action.get('all_in', False) else ""
-            return f"{prefix}{all_in} bet {value_bb:.1f}bb"
+            return f"{prefix}{all_in} bet {self.to_bb_string(action['value'])}"
         elif action_type == 'raise':
-            value_bb = action['value'] / self.bb
             all_in = " allin" if action.get('all_in', False) else ""
-            return f"{prefix}{all_in} raise to {value_bb:.1f}bb"
+            return f"{prefix}{all_in} raise to {self.to_bb_string(action['value'])}"
         elif action_type == 'return_uncalled':
-            value_bb = action['value'] / self.bb
-            return f"{prefix} got {value_bb:.1f}bb returned uncalled"
+            return f"{prefix} got {self.to_bb_string(action['value'])} returned uncalled"
         
         return None
     
@@ -206,7 +203,7 @@ class ToHumanFormat:
         
         # Pot before current street actions
         pot = self._calculate_pot_up_to_street(previous_streets, streets)
-        lines.append(f"Pot: {pot / self.bb:.1f}bb")
+        lines.append(f"Pot: {self.to_bb_string(pot)}")
         
         # Stacks
         stack_lines = self._format_stacks_for_street(previous_streets)
@@ -234,9 +231,8 @@ class ToHumanFormat:
         for player in sorted(self.players, key=lambda p: p['seat']):
             seat = player['seat']
             position = self.position_map.get(seat, f"Seat{seat}")
-            stack_bb = player['stack'] / self.bb
             hero_marker = " (Hero)" if player.get('hero', False) else ""
-            lines.append(f"{position}: {stack_bb:.1f}bb{hero_marker}")
+            lines.append(f"{position}: {self.to_bb_string(player['stack'])}{hero_marker}")
         
         lines.append("")
         
@@ -279,16 +275,21 @@ class ToHumanFormat:
         if results:
             lines.append("=== Results ===")
             hero_profit = self.attrs.get('hero_profit', 0)
-            lines.append(f"Hero profit: {hero_profit / self.bb:.1f}bb")
+            lines.append(f"Hero profit: {self.to_bb_string(hero_profit)}")
             
             for seat_str, seat_result in results.get('seats', {}).items():
                 seat = int(seat_str)
                 position = self.position_map.get(seat, f"Seat{seat}")
                 
+                status_line = f"{position}: "
+
                 if 'hand' in seat_result:
                     hand = self._format_hand(seat_result['hand'])
                     final_hand = seat_result.get('final_hand', ['muck'])[0]
-                    lines.append(f"{position}: {hand} ({final_hand})")
+                    status_line += f"{hand} ({final_hand})"
+                else:
+                    status_line += "didn't show cards"    
+                lines.append(status_line)
                 
                 if 'collected' in seat_result:
                     for pot_dict in seat_result['collected']:
@@ -297,6 +298,6 @@ class ToHumanFormat:
                                 pot_name = "main pot"
                             else:
                                 pot_name = "side pot " + pot_id.split("_")[-1]
-                            lines.append(f"  Collected {amount / self.bb:.1f}bb from {pot_name}")
+                            lines.append(f"  Collected {self.to_bb_string(amount)} from {pot_name}")
         
         return '\n'.join(lines)
