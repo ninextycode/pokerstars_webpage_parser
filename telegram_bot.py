@@ -68,7 +68,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # AI request
         ai_request = "Analyse my play in the following poker hand\n\n"
-        human_readable = ai_request + human_readable
+        
+        hero_cards = game_data['data']['attributes'].get('hero_cards', [])
+        hero_hand = ""
+        if hero_cards:
+            formatted_cards = " ".join([f"{card['rank']}{card['suit']}" for card in hero_cards])
+            hero_hand = f"{formatted_cards}\n\n"
+        
+        # AI request with hero cards first
+        ai_request = "Analyse my play in the following poker hand\n\n"
+        human_readable = hero_hand + ai_request + human_readable
+    
         # Send the result
         await update.message.reply_text(human_readable)
     
